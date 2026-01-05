@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # MIT License
 # 
 # Copyright (c) 2022 Misode
@@ -20,6 +21,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import copy
+import hashlib
 import click
 import requests
 import requests.auth
@@ -40,8 +43,9 @@ import image_packer.packer
 import nbtlib
 import multiprocessing
 import traceback
+from collections.abc import Callable
 
-EXPORTS = ('assets', 'assets-json', 'assets-tiny', 'data', 'data-json', 'summary', 'registries', 'atlas', 'diff')
+EXPORTS = ('assets', 'assets-json', 'assets-tiny', 'data', 'data-json', 'summary', 'registries', 'atlas', 'diff', 'history')
 
 APRIL_FOOLS = ('15w14a', '3D Shareware v1.34', '20w14infinite', '22w13oneblockatatime', '23w13a_or_b', '24w14potato', '25w14craftmine')
 
@@ -662,7 +666,8 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 		shutil.rmtree('diff/assets/minecraft/lang', ignore_errors=True)
 		os.makedirs('diff/assets/minecraft/lang', exist_ok=True)
 		shutil.copyfile('assets/assets/minecraft/lang/en_us.json', 'diff/assets/minecraft/lang/en_us.json')
-		shutil.copyfile('assets/assets/minecraft/lang/deprecated.json', 'diff/assets/minecraft/lang/deprecated.json')
+		if os.path.exists('assets/assets/minecraft/lang/deprecated.json'):
+			shutil.copyfile('assets/assets/minecraft/lang/deprecated.json', 'diff/assets/minecraft/lang/deprecated.json')
 
 		shutil.rmtree('diff/registries', ignore_errors=True)
 		os.makedirs('diff/registries', exist_ok=True)
@@ -705,6 +710,275 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				}
 				json.dump(data, f, indent=2)
 				f.write('\n')
+
+	# === Update history ===
+	if 'history' in exports:
+		has_previous = os.path.exists('history/data') or os.path.exists('history/assets') or os.path.exists('history/summary')
+
+		def is_versioned_entry(val):
+			return isinstance(val, list) and len(val) > 0 and isinstance(val[-1], dict) and '$$value' in val[-1]
+		def set_until(val, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l, create_string: Callable[[str], str] = lambda s: s):
+			if (is_versioned_entry(val)):
+				val = copy.copy(val)
+				entry_version: list | None = copy.copy(val[-1].get('$$version'))
+				if entry_version == None:
+					entry_version = create_list([])
+				if (isinstance(entry_version, list)):
+					if len(entry_version) == 0: entry_version.append(create_string('$$initial'))
+					if len(entry_version) == 1: entry_version.append(create_string(version))
+					else: entry_version = create_list([entry_version[0], create_string(version)])
+				else: entry_version = create_list([entry_version, create_string(version)])
+				val[-1]['$$version'] = entry_version
+				return val
+			return create_list([create_dict({
+				'$$version': create_list([create_string('$$initial'), create_string(version)]),
+				'$$value': val,
+			})])
+
+		def is_equal(a, b):
+			if a == b: return True
+			if isinstance(a, dict) and isinstance(b, dict):
+				if (len(a) != len(b)): return False
+				keys = set(a.keys()).union(b.keys())
+				if (len(a) != len(keys)): return False
+				for k in keys:
+					if not is_equal(a[k], b[k]): return False
+				return True
+			if isinstance(a, list) and isinstance(b, list):
+				if (len(a) != len(b)): return False
+				for i in range(len(a)):
+					if not is_equal(a[i], b[i]): return False
+				return True
+			return False
+
+		def build_latest_version(target, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l):
+			if is_versioned_entry(target):
+				if isinstance(target[-1].get('$$version'), list) and len(target[-1]['$$version']) == 2 and target[-1]['$$version'][-1] != None:
+					return None
+				target = target[-1]['$$value']
+			
+			if isinstance(target, dict):
+				new_target = {}
+				for [k, v] in target.items():
+					new_v = build_latest_version(v, create_dict, create_list)
+					if new_v != None:
+						new_target[k] = new_v
+				return create_dict(new_target)
+			
+			if isinstance(target, list):
+				new_target = []
+				for val in target:
+					val = build_latest_version(val, create_dict, create_list)
+					if val != None:
+						new_target.append(val)
+				return create_list(new_target)
+				
+			return target
+
+		def update_entry(
+				target,
+				source,
+				create_dict: Callable[[dict], dict] = lambda d: d,
+				create_list: Callable[[list], list] = lambda l: l,
+				create_string: Callable[[str], str] = lambda s: s,
+				force_homogenous_lists: bool = False,
+				skip_optimize_shallow: bool = False,
+				skip_optimize: bool = False
+			):
+			if target == source:
+				return (False, target)
+			if isinstance(target, nbtlib.File):
+				target = copy.copy(target)
+				(changed, data) = update_entry(target.root, source.root if isinstance(source, nbtlib.File) else source, create_dict, create_list, create_string, force_homogenous_lists, False, skip_optimize)
+				target.root = data
+				return (changed, target)
+			if source == None:
+				return (True, set_until(target, create_dict, create_list, create_string))
+			if target == None:
+				if has_previous:
+					return (True, create_list([ create_dict({ '$$version': create_string(version), '$$value': source })]))
+				return (False, source)
+			compare_target = target
+			if (is_versioned_entry(target)):
+				if isinstance(target[-1]['$$version'], list) and len(target[-1]['$$version']) == 2:
+					target = copy.copy(target)
+					target.append(create_dict({'$$version': create_string(version), '$$value':  source}))
+					return (True, target)
+				compare_target = target[-1]['$$value']
+
+			old_target = target
+			changes = 0
+			if isinstance(compare_target, dict) and isinstance(source, dict):
+				compare_target = copy.copy(compare_target)
+				keys = set(compare_target.keys()).union(source.keys())
+				for k in keys:
+					(changed, new) = update_entry(compare_target.get(k), source.get(k), create_dict, create_list, create_string, force_homogenous_lists, False, skip_optimize)
+					if changed:
+						changes += 1
+						compare_target[k] = new
+
+				if (is_versioned_entry(target)):
+					target = copy.copy(target)
+					target[-1]['$$value'] = compare_target
+				else:
+					target = compare_target
+
+			elif isinstance(compare_target, list) and isinstance(source, list):
+				new_target = []
+
+				target_i = 0
+				entry_became_list = False
+
+				def should_compare_current_with_later_entry(first: list, second: list):
+					skipped_entry_existing_in_first = False
+					for a in second:
+						if is_equal(a, first[0]):
+							return True
+						elif any(is_equal(a, b) for b in first):
+							if skipped_entry_existing_in_first:
+								return False
+							else:
+								skipped_entry_existing_in_first = True
+					return False
+
+				for i in range(len(source)):
+					if target_i >= len(compare_target):
+						if has_previous:
+							changes += 1
+							if not isinstance(source[i], list):
+								entry_became_list = True
+							new_target.append(create_list([create_dict({'$$version': create_string(version), '$$value':  source[i]})]))
+						else:
+							new_target.append(source[i])
+					elif is_equal(compare_target[target_i], source[i]):
+						new_target.append(compare_target[target_i])
+						target_i += 1
+					elif should_compare_current_with_later_entry(source[i:], compare_target[target_i:]):
+						for j in range(target_i, len(compare_target)):
+							target_i = j
+							if is_equal(compare_target[j], source[i]):
+								new_target.append(compare_target[j])
+								target_i += 1
+								break
+							changes += 1
+							if not isinstance(source[i], list):
+								entry_became_list = True
+							new_target.append(set_until(compare_target[j], create_dict, create_list, create_string))
+					elif should_compare_current_with_later_entry(compare_target[target_i:], source[i:]):
+						if has_previous:
+							changes += 1
+							if not isinstance(source[i], list):
+								entry_became_list = True
+							new_target.append(create_list([create_dict({'$$version': create_string(version), '$$value':  source[i]})]))
+						else:
+							new_target.append(target_i, source[i])
+					else:
+						(changed, new) = update_entry(compare_target[target_i], source[i], create_dict, create_list, create_string, force_homogenous_lists, True, skip_optimize)
+						if changed:
+							changes += 1
+							new_target.append(new)
+							if isinstance(new, list) and not isinstance(source[i], list):
+								entry_became_list = True
+						target_i += 1
+				for entry in compare_target[target_i:]:
+					changes += 1
+					new_target.append(set_until(entry, create_dict, create_list, create_string))
+					if not isinstance(entry, list):
+						entry_became_list = True
+
+				if force_homogenous_lists and entry_became_list:
+					compare_target = create_list([x if isinstance(x, list) else create_list([create_dict({ '$$value': x })]) for x in new_target])
+					changes += sum(1 for x in new_target if not isinstance(x, list))
+				else:
+					compare_target = create_list(new_target)
+
+				if (is_versioned_entry(target)):
+					target = copy.copy(target)
+					target[-1]['$$value'] = compare_target
+				else:
+					target = compare_target
+			elif is_versioned_entry(target):
+				target = copy.copy(target)
+				target.append(create_dict({'$$version': create_string(version), '$$value': source}))
+				return (True, target)
+			else:
+				return (True, create_list([create_dict({'$$value': target}), create_dict({'$$version': create_string(version), '$$value': source})]))
+
+			if not skip_optimize and not skip_optimize_shallow and changes > 1:
+				latest_version = build_latest_version(target, create_dict, create_list)
+				if is_versioned_entry(old_target):
+					combined_target = copy.copy(old_target)
+					combined_target.append(create_dict({'$$version': create_string(version), '$$value': latest_version}))
+				else:
+					combined_target = create_list([create_dict({'$$value': old_target}), create_dict({'$$version': create_string(version), '$$value': latest_version})])
+
+				def nbt_to_json(val):
+					if isinstance(val, nbtlib.Array):
+						return list(val)
+					raise TypeError(f'Object of type {val.__class__.__name__} is not JSON serializable')
+				if len(json.dumps(combined_target, separators=(",", ":"), default=nbt_to_json)) < len(json.dumps(target, separators=(",", ":"), default=nbt_to_json)):
+					return (True, combined_target)
+
+			return (changes > 0, target)
+		min_regex = re.compile(r'\.min\.(json|mcmeta|mchistory)$')
+		def get_file_iter(prefix: str):
+			return ((dir, file) for dir, _, files in os.walk(prefix) if not any(seg for seg in dir.split('/') if seg.startswith('.')) for file in files if not file.startswith('.'))
+
+		paths = set(f'{dir.removeprefix('history/')}/{min_regex.sub(lambda m: f'.{m.group(1)}', file).removesuffix('.mchistory')}' for dir, file in get_file_iter('history') if file.endswith('.json') or file.endswith('.mcmeta') or file.endswith('.mchistory') or file.endswith('.nbt'))
+		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('assets'))
+		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('data'))
+		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('summary'))
+
+		for path in paths:
+			target_path = f'history/{path}'
+			os.makedirs(target_path[:target_path.rindex('/')], exist_ok=True)
+			if path.endswith('.json') or path.endswith('.mcmeta'):
+				split = path.split('.')
+				extentionless_path = '.'.join(split[:-1])
+				ext = split[-1]
+
+				with open(target_path, 'r+' if os.path.exists(target_path) else 'w', encoding='utf-8') as file:
+					content = json.load(file) if file.readable() else None
+					if not os.path.exists(path):
+						content = set_until(content)
+					else:
+						with open(path, 'r', encoding='utf-8') as source_file:
+							source = json.load(source_file)
+						content = update_entry(content, source)[1]
+					file.seek(0)
+					json.dump(content, file, indent=4)
+					with open(f'history/{extentionless_path}.min.{ext}', 'w', encoding='utf8') as min:
+						json.dump(content, min, separators=(",", ":"))
+			elif path.endswith('.nbt'):
+				content = nbtlib.load(target_path) if os.path.exists(target_path) else None
+				source = None
+				if os.path.exists(path):
+					source = nbtlib.load(path)
+					del source.root['DataVersion']
+				content = update_entry(content, source, lambda d: nbtlib.Compound(d), lambda l: nbtlib.List(l), lambda s: nbtlib.String(s), True)[1]
+				content.save(target_path)
+			else:
+				history_path = f'{target_path}.mchistory'
+				with open(history_path, 'r+' if os.path.exists(history_path) else 'w', encoding='utf-8') as history_file:
+					history = json.load(history_file) if history_file.readable() else None
+					history_file.seek(0)
+					if not os.path.exists(path):
+						history = set_until(history)
+					else:
+						sha1 = hashlib.sha1()
+						with open(path, "rb") as source:
+							while chunk := source.read(8192):
+								sha1.update(chunk)
+						sha1 = sha1.hexdigest()
+						old = build_latest_version(history)
+						if old != sha1:
+							history = update_entry(history, sha1)[1]
+							os.makedirs(target_path, exist_ok=True)
+							shutil.copyfile(path, f'{target_path}/{sha1}')
+					json.dump(history, history_file, indent=4)
+					with open(f'{target_path}.min.mchistory', 'w', encoding='utf8') as min:
+						json.dump(history, min, separators=(",", ":"))
+
 
 	# === export version.json to all ===
 	for export in exports:
