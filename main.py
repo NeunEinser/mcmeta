@@ -901,7 +901,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 									if source_match_eq:
 										new_target.append(compare_target[j])
 									else:
-										(changed, new) = update_entry(compare_target[j], source[i], create_dict, create_list, create_string, force_homogenous_lists, True, skip_optimize)
+										(changed, new) = update_entry(compare_target[j], source[i], create_dict, create_list, create_string, force_homogenous_lists, force_homogenous_lists, skip_optimize)
 										if changed:
 											changes += 1
 											new_target.append(new)
