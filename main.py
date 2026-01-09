@@ -881,16 +881,16 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 					for a in second[:50]:
 						(cur_eq, cur_score) = match(a, first[0])
 						if cur_eq:
-							return (True, a)
+							return (True, cur_score, a)
 						if cur_score > best_score:
 							best_score = cur_score
 							best = a
 						if any(is_equal(a, b) for b in first[:50]):
 							if skipped_entry_existing_in_first:
-								return (False, best)
+								return (False, best_score, best)
 							else:
 								skipped_entry_existing_in_first = True
-					return (False, best)
+					return (False, best_score, best)
 
 				old_target_new_index_lookup = []
 				for i in range(len(source)):
@@ -904,12 +904,11 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 						else:
 							new_target.append(source[i])
 					else:
-						(source_match_eq, source_best_match) = get_best_match_in_other(source[i:], compare_target[target_i:])
+						(source_match_eq, source_best_score, source_best_match) = get_best_match_in_other(source[i:], compare_target[target_i:])
 						update_using_best_source_match = source_match_eq
 						if not source_match_eq:
-							(target_match_eq, target_best_match) = get_best_match_in_other(compare_target[target_i:], source[i:])
-							update_using_best_source_match = not target_match_eq \
-								and (source_best_match != target[target_i] or target_best_match == source[i])
+							(target_match_eq, target_best_score, _) = get_best_match_in_other(compare_target[target_i:], source[i+1:])
+							update_using_best_source_match = not target_match_eq and source_best_score >= target_best_score
 
 						if update_using_best_source_match:
 							for j in range(target_i, len(compare_target)):
