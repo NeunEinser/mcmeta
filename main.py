@@ -23,6 +23,7 @@
 
 import copy
 import hashlib
+import typing
 import click
 import requests
 import requests.auth
@@ -751,6 +752,27 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				return True
 			return False
 
+		def match(a, b):
+			if a == b: return (True, len(a) if isinstance(a, typing.Sized) else 1)
+			if isinstance(a, dict) and isinstance(b, dict):
+				keys = set(a.keys()).intersection(b.keys())
+				is_equal = len(a) == len(keys)
+				score = 0
+				for k in keys:
+					(cur_eq, cur_score) = match(a[k], b[k])
+					if not cur_eq: is_equal = False
+					score += cur_score
+				return (is_equal, score)
+			if isinstance(a, list) and isinstance(b, list):
+				is_equal = len(a) == len(b)
+				score = 0
+				for i in range(min(len(a), len(b))):
+					(cur_eq, cur_score) = match(a[i], b[i])
+					if not cur_eq: is_equal = False
+					score += cur_score
+				return (is_equal, score)
+			return (False, 0)
+
 		def build_latest_version(target, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l):
 			if is_versioned_entry(target):
 				if isinstance(target[-1].get('$$version'), list) and len(target[-1]['$$version']) == 2 and target[-1]['$$version'][-1] != None:
@@ -829,17 +851,23 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				target_i = 0
 				entry_became_list = False
 
-				def should_compare_current_with_later_entry(first: list, second: list):
+				def get_best_match_in_other(first: list, second: list):
 					skipped_entry_existing_in_first = False
+					best = None
+					best_score = -1
 					for a in second[:50]:
-						if is_equal(a, first[0]):
-							return True
-						elif any(is_equal(a, b) for b in first[:50]):
+						(cur_eq, cur_score) = match(a, first[0])
+						if cur_eq:
+							return (True, a)
+						if cur_score > best_score:
+							best_score = cur_score
+							best = a
+						if any(is_equal(a, b) for b in first[:50]):
 							if skipped_entry_existing_in_first:
-								return False
+								return (False, best)
 							else:
 								skipped_entry_existing_in_first = True
-					return False
+					return (False, best)
 
 				for i in range(len(source)):
 					if target_i >= len(compare_target):
@@ -850,36 +878,41 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 							new_target.append(create_list([create_dict({'$$version': create_string(version), '$$value':  source[i]})]))
 						else:
 							new_target.append(source[i])
-					elif is_equal(compare_target[target_i], source[i]):
-						new_target.append(compare_target[target_i])
-						target_i += 1
-					elif should_compare_current_with_later_entry(source[i:], compare_target[target_i:]):
-						for j in range(target_i, len(compare_target)):
-							target_i = j
-							if is_equal(compare_target[j], source[i]):
-								new_target.append(compare_target[j])
-								target_i += 1
-								break
-							changes += 1
-							if not isinstance(source[i], list):
-								entry_became_list = True
-							new_target.append(set_until(compare_target[j], create_dict, create_list, create_string))
-					elif should_compare_current_with_later_entry(compare_target[target_i:], source[i:]):
-						if has_previous:
-							changes += 1
-							if not isinstance(source[i], list):
-								entry_became_list = True
-							new_target.append(create_list([create_dict({'$$version': create_string(version), '$$value':  source[i]})]))
-						else:
-							new_target.append(target_i, source[i])
 					else:
-						(changed, new) = update_entry(compare_target[target_i], source[i], create_dict, create_list, create_string, force_homogenous_lists, True, skip_optimize)
-						if changed:
-							changes += 1
-							new_target.append(new)
-							if isinstance(new, list) and not isinstance(source[i], list):
-								entry_became_list = True
-						target_i += 1
+						(source_match_eq, source_best_match) = get_best_match_in_other(source[i:], compare_target[target_i:])
+						update_using_best_source_match = source_match_eq
+						if not source_match_eq:
+							(target_match_eq, target_best_match) = get_best_match_in_other(compare_target[target_i:], source[i:])
+							update_using_best_source_match = not target_match_eq \
+								and (source_best_match != target[target_i] or target_best_match == source[i])
+
+						if update_using_best_source_match:
+							for j in range(target_i, len(compare_target)):
+								target_i = j
+								if source_best_match == compare_target[j]:
+									if source_match_eq:
+										new_target.append(compare_target[j])
+									else:
+										(changed, new) = update_entry(compare_target[j], source[i], create_dict, create_list, create_string, force_homogenous_lists, True, skip_optimize)
+										if changed:
+											changes += 1
+											new_target.append(new)
+											if isinstance(new, list) and not isinstance(compare_target[j], list):
+												entry_became_list = True
+									target_i += 1
+									break
+								changes += 1
+								if not isinstance(compare_target[j], list):
+									entry_became_list = True
+								new_target.append(set_until(compare_target[j], create_dict, create_list, create_string))
+						else:
+							if has_previous:
+								changes += 1
+								new_target.append(create_list([create_dict({'$$version': create_string(version), '$$value':  source[i]})]))
+								if not isinstance(source[i], list):
+									entry_became_list = True
+							else:
+								new_target.append(target_i, source[i])
 				for entry in compare_target[target_i:]:
 					changes += 1
 					new_target.append(set_until(entry, create_dict, create_list, create_string))
@@ -947,8 +980,8 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 						content = update_entry(content, source)[1]
 					file.seek(0)
 					json.dump(content, file, indent=4)
-					with open(f'history/{extentionless_path}.min.{ext}', 'w', encoding='utf8') as min:
-						json.dump(content, min, separators=(",", ":"))
+					with open(f'history/{extentionless_path}.min.{ext}', 'w', encoding='utf8') as min_file:
+						json.dump(content, min_file, separators=(",", ":"))
 			elif path.endswith('.nbt'):
 				content = nbtlib.load(target_path) if os.path.exists(target_path) else None
 				source = None
@@ -976,8 +1009,8 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 							os.makedirs(target_path, exist_ok=True)
 							shutil.copyfile(path, f'{target_path}/{sha1}')
 					json.dump(history, history_file, indent=4)
-					with open(f'{target_path}.min.mchistory', 'w', encoding='utf8') as min:
-						json.dump(history, min, separators=(",", ":"))
+					with open(f'{target_path}.min.mchistory', 'w', encoding='utf8') as min_file:
+						json.dump(history, min_file, separators=(",", ":"))
 
 
 	# === export version.json to all ===
