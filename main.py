@@ -737,6 +737,11 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 			})])
 
 		def is_equal(a, b):
+			if is_versioned_entry(a):
+				a = a[-1]['$$value']
+			if is_versioned_entry(b):
+				b = b[-1]['$$value']
+
 			if a == b: return True
 			if isinstance(a, dict) and isinstance(b, dict):
 				if (len(a) != len(b)): return False
@@ -753,6 +758,11 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 			return False
 
 		def match(a, b):
+			if is_versioned_entry(a):
+				a = a[-1]['$$value']
+			if is_versioned_entry(b):
+				b = b[-1]['$$value']
+
 			if isinstance(a, dict) and isinstance(b, dict):
 				keys = set(a.keys()).intersection(b.keys())
 				is_equal = len(a) == len(keys)
