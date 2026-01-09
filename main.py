@@ -831,10 +831,10 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 
 				def should_compare_current_with_later_entry(first: list, second: list):
 					skipped_entry_existing_in_first = False
-					for a in second:
+					for a in second[:50]:
 						if is_equal(a, first[0]):
 							return True
-						elif any(is_equal(a, b) for b in first):
+						elif any(is_equal(a, b) for b in first[:50]):
 							if skipped_entry_existing_in_first:
 								return False
 							else:
