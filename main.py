@@ -753,7 +753,6 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 			return False
 
 		def match(a, b):
-			if a == b: return (True, len(a) if isinstance(a, typing.Sized) else 1)
 			if isinstance(a, dict) and isinstance(b, dict):
 				keys = set(a.keys()).intersection(b.keys())
 				is_equal = len(a) == len(keys)
@@ -771,7 +770,8 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 					if not cur_eq: is_equal = False
 					score += cur_score
 				return (is_equal, score)
-			return (False, 0)
+			is_equal = a == b
+			return (is_equal, 1 if is_equal else 0)
 
 		def build_latest_version(target, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l):
 			if is_versioned_entry(target):
