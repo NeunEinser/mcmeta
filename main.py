@@ -757,11 +757,15 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				keys = set(a.keys()).intersection(b.keys())
 				is_equal = len(a) == len(keys)
 				score = 0
+				multiplier = 1
 				for k in keys:
 					(cur_eq, cur_score) = match(a[k], b[k])
-					if not cur_eq: is_equal = False
+					if not cur_eq:
+						is_equal = False
+					elif isinstance(k, str) and k.lower() in ['pos', 'uuid']:
+						multiplier *= 2
 					score += cur_score
-				return (is_equal, score)
+				return (is_equal, score * multiplier)
 			if isinstance(a, list) and isinstance(b, list):
 				is_equal = len(a) == len(b)
 				score = 0
