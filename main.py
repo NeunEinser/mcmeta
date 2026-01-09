@@ -807,6 +807,11 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				skip_optimize_shallow: bool = False,
 				skip_optimize: bool = False
 			):
+			def nbt_to_json(val):
+				if isinstance(val, nbtlib.Array):
+					return list(val)
+				raise TypeError(f'Object of type {val.__class__.__name__} is not JSON serializable')
+
 			if target == source:
 				return (False, target)
 			if isinstance(target, nbtlib.File):
@@ -869,8 +874,10 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 								skipped_entry_existing_in_first = True
 					return (False, best)
 
+				old_target_new_index_lookup = []
 				for i in range(len(source)):
 					if target_i >= len(compare_target):
+						old_target_new_index_lookup.append(None)
 						if has_previous:
 							changes += 1
 							if not isinstance(source[i], list):
@@ -889,6 +896,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 						if update_using_best_source_match:
 							for j in range(target_i, len(compare_target)):
 								target_i = j
+								old_target_new_index_lookup.append(compare_target[j])
 								if source_best_match == compare_target[j]:
 									if source_match_eq:
 										new_target.append(compare_target[j])
@@ -906,6 +914,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 									entry_became_list = True
 								new_target.append(set_until(compare_target[j], create_dict, create_list, create_string))
 						else:
+							old_target_new_index_lookup.append(None)
 							if has_previous:
 								changes += 1
 								new_target.append(create_list([create_dict({'$$version': create_string(version), '$$value':  source[i]})]))
@@ -915,12 +924,23 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 								new_target.append(target_i, source[i])
 				for entry in compare_target[target_i:]:
 					changes += 1
-					new_target.append(set_until(entry, create_dict, create_list, create_string))
+					old_target_new_index_lookup.append(compare_target[j])
 					if not isinstance(entry, list):
 						entry_became_list = True
+					new_target.append(set_until(entry, create_dict, create_list, create_string))
 
 				if force_homogenous_lists and entry_became_list:
-					compare_target = create_list([x if isinstance(x, list) else create_list([create_dict({ '$$value': x })]) for x in new_target])
+					def make_optimized_list(val, old_val):
+						simple = create_list([create_dict({'$$value': val})])
+						if old_val == None or skip_optimize or skip_optimize_shallow or old_val == val:
+							return simple
+						latest_val = build_latest_version(val, create_dict, create_list)
+						combined_val = create_list([create_dict({'$$value': old_val}), create_dict({'$$version': create_string(version), '$$value': latest_val})])
+						if len(json.dumps(combined_val, separators=(",", ":"), default=nbt_to_json)) < len(json.dumps(simple, separators=(",", ":"), default=nbt_to_json)):
+							return combined_val
+						return simple
+
+					compare_target = create_list([new_target[i] if isinstance(new_target[i], list) else make_optimized_list(new_target[i], old_target_new_index_lookup[i]) for i in range(len(new_target))])
 					changes += sum(1 for x in new_target if not isinstance(x, list))
 				else:
 					compare_target = create_list(new_target)
@@ -945,10 +965,6 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				else:
 					combined_target = create_list([create_dict({'$$value': old_target}), create_dict({'$$version': create_string(version), '$$value': latest_version})])
 
-				def nbt_to_json(val):
-					if isinstance(val, nbtlib.Array):
-						return list(val)
-					raise TypeError(f'Object of type {val.__class__.__name__} is not JSON serializable')
 				if len(json.dumps(combined_target, separators=(",", ":"), default=nbt_to_json)) < len(json.dumps(target, separators=(",", ":"), default=nbt_to_json)):
 					return (True, combined_target)
 
