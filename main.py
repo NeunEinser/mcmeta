@@ -781,8 +781,12 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				score = 0
 				for i in range(min(len(a), len(b))):
 					(cur_eq, cur_score) = match(a[i], b[i])
-					if not cur_eq: is_equal = False
-					score += cur_score
+					if not cur_eq:
+						is_equal = False
+					# Prevent primitive number lists from counting up the score for random matches
+					if not isinstance(a[i], int) and not isinstance(a[i], float):
+						score += cur_score
+				if is_equal and score == 0: score = 1
 				return (is_equal, score)
 			is_equal = a == b
 			return (is_equal, 1 if is_equal else 0)
