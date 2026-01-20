@@ -24,6 +24,11 @@ on:
       undo:
         description: 'Reset to version'
         type: string
+      fixtags:
+        description: 'Fix tags'
+        type: boolean
+        required: true
+        default: false
 
 jobs:
   run:
@@ -49,7 +54,7 @@ jobs:
           restore-keys: |
             mcmeta-
 
-      - run: python main.py${{ inputs.force && format(' --undo {0}', inputs.undo) || '' }}${{ inputs.version && format(' --version {0}', inputs.version) || '' }} --fetch --export ${{ inputs.export }}${{ inputs.commit && ' --commit --push' || '' }}${{ inputs.force && ' --force' || '' }}
+      - run: python main.py${{ inputs.force && format(' --undo {0}', inputs.undo) || '' }}${{ inputs.version && format(' --version {0}', inputs.version) || '' }} --fetch --export ${{ inputs.export }}${{ inputs.commit && ' --commit --push' || '' }}${{ inputs.force && ' --force' || '' }}${{ inputs.fixtags && ' --fixtags' || '' }}
         env:
           github-username: misode
           github-token: ${{ secrets.GITHUB_TOKEN }}
