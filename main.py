@@ -530,7 +530,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 
 		registries['lang'] = [e for e in registries['lang'] if e != "deprecated"]
 
-	# === simplify blocks report ===
+	# === create blocks and items report ===
 	if 'summary' in exports or 'diff' in exports:
 		blocks = dict()
 		block_definitions = dict()
@@ -547,7 +547,13 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 					definition = data.get('definition')
 					if definition:
 						block_definitions[key.removeprefix('minecraft:')] = definition
-		if os.path.isfile('generated/reports/items.json'):
+		item_components_path = 'generated/reports/minecraft/components/item'
+		if os.path.isdir(item_components_path):
+			for path in glob.glob(f'{item_components_path}/**/*.json', recursive=True):
+				item_id = path.replace('\\', '/', -1).removeprefix(f'{item_components_path}/').removesuffix('.json')
+				with open(path, 'r') as f:
+					item_components[item_id] = json.load(f).get('components')
+		elif os.path.isfile('generated/reports/items.json'):
 			with open('generated/reports/items.json', 'r') as f:
 				for key, data in json.load(f).items():
 					components = data.get('components')
