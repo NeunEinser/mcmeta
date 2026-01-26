@@ -851,6 +851,9 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 					return (True, target)
 				compare_target = target[-1]['$$value']
 
+				if compare_target == source:
+					return (False, target)
+
 			old_target = target
 			changes = 0
 			if isinstance(compare_target, dict) and isinstance(source, dict):
