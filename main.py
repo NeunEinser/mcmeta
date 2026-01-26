@@ -717,7 +717,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 		has_previous = os.path.exists('history/data') or os.path.exists('history/assets') or os.path.exists('history/summary')
 
 		def is_versioned_entry(val):
-			return isinstance(val, list) and len(val) > 0 and isinstance(val[-1], dict) and '$$value' in val[-1]
+			return isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict) and '$$value' in val[0]
 		def set_until(val, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l, create_string: Callable[[str], str] = lambda s: s):
 			if (is_versioned_entry(val)):
 				val = copy.copy(val)
@@ -793,7 +793,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 
 		def build_latest_version(target, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l):
 			if is_versioned_entry(target):
-				if isinstance(target[-1].get('$$version'), list) and len(target[-1]['$$version']) == 2 and target[-1]['$$version'][-1] != None:
+				if isinstance(target[-1].get('$$version'), list) and len(target[-1]['$$version']) == 2:
 					return None
 				target = target[-1]['$$value']
 			
@@ -844,8 +844,8 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 					return (True, create_list([ create_dict({ '$$version': create_string(version), '$$value': source })]))
 				return (False, source)
 			compare_target = target
-			if (is_versioned_entry(target)):
-				if isinstance(target[-1]['$$version'], list) and len(target[-1]['$$version']) == 2:
+			if is_versioned_entry(target):
+				if isinstance(target[-1].get('$$version'), list) and len(target[-1]['$$version']) == 2:
 					target = copy.copy(target)
 					target.append(create_dict({'$$version': create_string(version), '$$value':  source}))
 					return (True, target)
