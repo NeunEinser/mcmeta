@@ -990,13 +990,21 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 
 			return (changes > 0, target)
 		min_regex = re.compile(r'\.min\.(json|mcmeta|mchistory)$')
-		def get_file_iter(prefix: str):
-			return ((dir, file) for dir, _, files in os.walk(prefix) if not any(seg for seg in dir.split('/') if seg.startswith('.')) for file in files if not file.startswith('.'))
+		def get_file_iter(prefix: str, exclude_dirs: set[str] = set()):
+			return ((dir, min_regex.sub(lambda m: f'.{m.group(1)}', file))
+				for dir, _, files in os.walk(prefix)
+					if not any(True for e in exclude_dirs if dir.startswith(f"{prefix}{os.sep}{e}"))
+						and not any(True for seg in dir.split('/') if seg.startswith('.'))
+						for file in files
+							if not file.startswith('.')
+								and not file.endswith('.gz')
+								and not file.startswith('version.'))
 
-		paths = set(f'{dir.removeprefix('history/')}/{min_regex.sub(lambda m: f'.{m.group(1)}', file).removesuffix('.mchistory')}' for dir, file in get_file_iter('history') if file.endswith('.json') or file.endswith('.mcmeta') or file.endswith('.mchistory') or file.endswith('.nbt'))
+		paths = set(f'{dir.removeprefix('history/')}/{file.removesuffix('.mchistory')}' for dir, file in get_file_iter('history') if file.endswith('.json') or file.endswith('.mcmeta') or file.endswith('.mchistory') or file.endswith('.nbt'))
 		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('assets'))
 		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('data'))
-		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('summary'))
+		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('registries'))
+		paths = paths.union(f'{dir}/{file}' for dir, file in get_file_iter('summary', ['assets', 'data', 'registries', 'sounds', 'versions']))
 
 		for path in paths:
 			target_path = f'history/{path}'
