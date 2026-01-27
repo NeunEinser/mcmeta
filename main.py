@@ -719,22 +719,21 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 		def is_versioned_entry(val):
 			return isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict) and '$$value' in val[0]
 		def set_until(val, create_dict: Callable[[dict], dict] = lambda d: d, create_list: Callable[[list], list] = lambda l: l, create_string: Callable[[str], str] = lambda s: s):
-			if (is_versioned_entry(val)):
+			if is_versioned_entry(val):
+				if isinstance(val[-1].get('$$version'), list) and len(val[-1]['$$version']) == 2:
+					return (False, val)
 				val = copy.copy(val)
-				entry_version: list | None = copy.copy(val[-1].get('$$version'))
-				if entry_version == None:
-					entry_version = create_list([])
-				if (isinstance(entry_version, list)):
-					if len(entry_version) == 0: entry_version.append(create_string('$$initial'))
-					if len(entry_version) == 1: entry_version.append(create_string(version))
-					else: entry_version = create_list([entry_version[0], create_string(version)])
-				else: entry_version = create_list([entry_version, create_string(version)])
+				entry_version: list | str | None = val[-1].get('$$version', create_string('$$initial'))
+				first_version = entry_version
+				if isinstance(first_version, list):
+					first_version = first_version[0] if len(first_version) > 0 else create_string('$$initial')
+				entry_version = create_list([first_version, create_string(version)])
 				val[-1]['$$version'] = entry_version
-				return val
-			return create_list([create_dict({
+				return (True, val)
+			return (True, create_list([create_dict({
 				'$$version': create_list([create_string('$$initial'), create_string(version)]),
 				'$$value': val,
-			})])
+			})]))
 
 		def is_equal(a, b):
 			if is_versioned_entry(a):
@@ -837,15 +836,11 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				(changed, data) = update_entry(target.root, source.root if isinstance(source, nbtlib.File) else source, create_dict, create_list, create_string, force_homogenous_lists, False, skip_optimize)
 				target.root = data
 				return (changed, target)
-			if source == None:
-				return (True, set_until(target, create_dict, create_list, create_string))
-			if target == None:
-				if has_previous:
-					return (True, create_list([ create_dict({ '$$version': create_string(version), '$$value': source })]))
-				return (False, source)
 			compare_target = target
 			if is_versioned_entry(target):
 				if isinstance(target[-1].get('$$version'), list) and len(target[-1]['$$version']) == 2:
+					if source == None:
+						return (False, target)
 					target = copy.copy(target)
 					target.append(create_dict({'$$version': create_string(version), '$$value':  source}))
 					return (True, target)
@@ -853,6 +848,12 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 
 				if compare_target == source:
 					return (False, target)
+			if source == None:
+				return set_until(target, create_dict, create_list, create_string)
+			if target == None:
+				if has_previous:
+					return (True, create_list([ create_dict({ '$$version': create_string(version), '$$value': source })]))
+				return (False, source)
 
 			old_target = target
 			changes = 0
@@ -929,10 +930,12 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 												entry_became_list = True
 									target_i += 1
 									break
-								changes += 1
 								if not isinstance(compare_target[j], list):
 									entry_became_list = True
-								new_target.append(set_until(compare_target[j], create_dict, create_list, create_string))
+								(changed, new_entry) = set_until(compare_target[j], create_dict, create_list, create_string)
+								if changed:
+									changes += 1
+								new_target.append(new_entry)
 						else:
 							old_target_new_index_lookup.append(None)
 							if has_previous:
@@ -943,11 +946,14 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 							else:
 								new_target.append(target_i, source[i])
 				for entry in compare_target[target_i:]:
-					changes += 1
 					old_target_new_index_lookup.append(compare_target[j])
 					if not isinstance(entry, list):
 						entry_became_list = True
-					new_target.append(set_until(entry, create_dict, create_list, create_string))
+					
+					(changed, new_entry) = set_until(compare_target[j], create_dict, create_list, create_string)
+					if changed:
+						changes += 1
+					new_target.append(new_entry)
 
 				if force_homogenous_lists and entry_became_list:
 					def make_optimized_list(val, old_val):
@@ -1017,7 +1023,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 				with open(target_path, 'r+' if os.path.exists(target_path) else 'w', encoding='utf-8') as file:
 					content = json.load(file) if file.readable() else None
 					if not os.path.exists(path):
-						content = set_until(content)
+						content = set_until(content)[1]
 					else:
 						with open(path, 'r', encoding='utf-8') as source_file:
 							source = json.load(source_file)
@@ -1040,7 +1046,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 					history = json.load(history_file) if history_file.readable() else None
 					history_file.seek(0)
 					if not os.path.exists(path):
-						history = set_until(history)
+						history = set_until(history)[1]
 					else:
 						sha1 = hashlib.sha1()
 						with open(path, "rb") as source:
