@@ -946,11 +946,11 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 							else:
 								new_target.append(target_i, source[i])
 				for entry in compare_target[target_i:]:
-					old_target_new_index_lookup.append(compare_target[j])
+					old_target_new_index_lookup.append(entry)
 					if not isinstance(entry, list):
 						entry_became_list = True
 					
-					(changed, new_entry) = set_until(compare_target[j], create_dict, create_list, create_string)
+					(changed, new_entry) = set_until(entry, create_dict, create_list, create_string)
 					if changed:
 						changes += 1
 					new_target.append(new_entry)
