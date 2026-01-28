@@ -764,7 +764,7 @@ def process(version: str, versions: dict[str], exports: tuple[str]):
 
 			if isinstance(a, dict) and isinstance(b, dict):
 				keys = set(a.keys()).intersection(b.keys())
-				is_equal = len(a) == len(keys)
+				is_equal = len(a) == len(keys) and len(b) == len(keys)
 				score = 0
 				multiplier = 1
 				for k in keys:
